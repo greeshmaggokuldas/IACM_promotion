@@ -47,43 +47,55 @@ resource "terraform_data" "import_template" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      # Step 1: Update the template YAML in Git to match target project/org
-      # Use GitHub API to update the file with correct projectIdentifier and orgIdentifier
-      FILE_CONTENT=$(curl -s \
+      set -e
+
+      # Step 1: Get current file from GitHub
+      FILE_RESPONSE=$(curl -s \
         -H "Authorization: token ${var.github_token}" \
         -H "Accept: application/vnd.github.v3+json" \
         "https://api.github.com/repos/${var.github_owner}/${var.github_repo}/contents/${var.template_yaml_path}?ref=${var.github_branch}")
 
-      FILE_SHA=$(echo "$FILE_CONTENT" | grep -o '"sha": "[^"]*"' | head -1 | cut -d'"' -f4)
+      FILE_SHA=$(echo "$FILE_RESPONSE" | jq -r '.sha')
+      echo "$FILE_RESPONSE" | jq -r '.content' | base64 -d > /tmp/template_original.yaml
 
-      # Decode current content, replace org/project identifiers, re-encode
-      echo "$FILE_CONTENT" | grep -o '"content": "[^"]*"' | head -1 | cut -d'"' -f4 | tr -d '\n' | base64 -d > /tmp/template_original.yaml
+      echo "=== Original YAML (first 5 lines) ==="
+      head -5 /tmp/template_original.yaml
 
-      # Replace or add projectIdentifier and orgIdentifier
-      sed -i "s/projectIdentifier:.*/projectIdentifier: ${var.project_id}/" /tmp/template_original.yaml
-      sed -i "s/orgIdentifier:.*/orgIdentifier: ${var.org_id}/" /tmp/template_original.yaml
-
-      # If fields don't exist, add them after 'type: Stage'
-      if ! grep -q "projectIdentifier:" /tmp/template_original.yaml; then
+      # Step 2: Update projectIdentifier and orgIdentifier in the YAML
+      if grep -q "projectIdentifier:" /tmp/template_original.yaml; then
+        sed -i "s/projectIdentifier:.*/projectIdentifier: ${var.project_id}/" /tmp/template_original.yaml
+      else
         sed -i "/type: Stage/a\\  projectIdentifier: ${var.project_id}" /tmp/template_original.yaml
       fi
-      if ! grep -q "orgIdentifier:" /tmp/template_original.yaml; then
+
+      if grep -q "orgIdentifier:" /tmp/template_original.yaml; then
+        sed -i "s/orgIdentifier:.*/orgIdentifier: ${var.org_id}/" /tmp/template_original.yaml
+      else
         sed -i "/projectIdentifier:/a\\  orgIdentifier: ${var.org_id}" /tmp/template_original.yaml
       fi
 
-      NEW_CONTENT=$(base64 -w 0 /tmp/template_original.yaml)
+      echo "=== Updated YAML (first 7 lines) ==="
+      head -7 /tmp/template_original.yaml
 
-      # Push updated file to Git
-      curl -s -X PUT \
+      # Step 3: Push updated file to Git
+      NEW_CONTENT=$(base64 -w 0 /tmp/template_original.yaml)
+      UPDATE_RESPONSE=$(curl -s -w "\n%%{http_code}" -X PUT \
         -H "Authorization: token ${var.github_token}" \
         -H "Accept: application/vnd.github.v3+json" \
         "https://api.github.com/repos/${var.github_owner}/${var.github_repo}/contents/${var.template_yaml_path}" \
-        -d "{\"message\":\"chore: update template identifiers for ${var.project_id}\",\"content\":\"$NEW_CONTENT\",\"sha\":\"$FILE_SHA\",\"branch\":\"${var.github_branch}\"}" > /dev/null
+        -d "{\"message\":\"chore: update template identifiers for ${var.project_id}\",\"content\":\"$NEW_CONTENT\",\"sha\":\"$FILE_SHA\",\"branch\":\"${var.github_branch}\"}")
+      UPDATE_CODE=$(echo "$UPDATE_RESPONSE" | tail -1)
+      echo "Git update status: $UPDATE_CODE"
+      if [ "$UPDATE_CODE" -ge 400 ]; then
+        echo "ERROR: Failed to update file in Git"
+        echo "$UPDATE_RESPONSE" | sed '$d'
+        exit 1
+      fi
 
-      # Step 2: Wait for Git to propagate
-      sleep 3
+      # Step 4: Wait for Git to propagate
+      sleep 5
 
-      # Step 3: Import the template from Git into Harness
+      # Step 5: Import the template from Git into Harness
       RESPONSE=$(curl -s -w "\n%%{http_code}" -X POST \
         "${var.harness_endpoint}/v1/orgs/${var.org_id}/projects/${var.project_id}/templates/${local.identifier}/import" \
         -H "x-api-key: ${var.harness_api_key}" \
@@ -105,12 +117,13 @@ resource "terraform_data" "import_template" {
         }')
       HTTP_CODE=$(echo "$RESPONSE" | tail -1)
       BODY=$(echo "$RESPONSE" | sed '$d')
-      echo "HTTP Status: $HTTP_CODE"
-      echo "Response: $BODY"
+      echo "Import HTTP Status: $HTTP_CODE"
+      echo "Import Response: $BODY"
       if [ "$HTTP_CODE" -ge 400 ]; then
         echo "ERROR: Import API failed with status $HTTP_CODE"
         exit 1
       fi
+      echo "SUCCESS: Template imported into ${var.project_id}"
     EOT
   }
 }
