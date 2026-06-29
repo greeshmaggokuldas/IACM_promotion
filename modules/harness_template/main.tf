@@ -99,8 +99,8 @@ resource "terraform_data" "import_template" {
         exit 1
       fi
 
-      # Step 4: Wait for Git to propagate
-      sleep 5
+      # Step 4: Wait for Git to propagate and Harness cache to refresh
+      sleep 15
 
       # Step 5: Import the template from Git into Harness
       RESPONSE=$(curl -s -w "\n%%{http_code}" -X POST \
