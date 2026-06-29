@@ -161,6 +161,8 @@ module "harness_template" {
   # API credentials for import API call
   harness_api_key   = var.harness_api_key
   harness_endpoint  = var.harness_endpoint
+  github_token      = var.github_token
+  github_owner      = var.github_owner
 }
 
 # =============================================================================

@@ -62,3 +62,14 @@ variable "harness_endpoint" {
   type    = string
   default = "https://app.harness.io"
 }
+
+variable "github_token" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "github_owner" {
+  type    = string
+  default = ""
+}
