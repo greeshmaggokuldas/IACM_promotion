@@ -44,22 +44,23 @@ resource "terraform_data" "import_template" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      curl -s -X POST \
-        "${var.harness_endpoint}/template/api/templates/import/${local.identifier}?accountIdentifier=${var.account_id}&orgIdentifier=${var.org_id}&projectIdentifier=${var.project_id}" \
+      curl -sf -X POST \
+        "${var.harness_endpoint}/v1/orgs/${var.org_id}/projects/${var.project_id}/templates/${local.identifier}/import" \
         -H "x-api-key: ${var.harness_api_key}" \
+        -H "Harness-Account: ${var.account_id}" \
         -H "Content-Type: application/json" \
         -d '{
+          "git_import_details": {
+            "connector_ref": "${var.git_connector_ref}",
+            "repo_name": "${var.github_repo}",
+            "branch_name": "${var.github_branch}",
+            "file_path": "${var.template_yaml_path}",
+            "is_force_import": true
+          },
           "template_import_request": {
             "template_name": "${local.name}",
             "template_version": "${local.version}",
             "template_description": "Promoted via OpenTofu from Git"
-          },
-          "git_import_info": {
-            "branch_name": "${var.github_branch}",
-            "file_path": "${var.template_yaml_path}",
-            "connector_ref": "${var.git_connector_ref}",
-            "repo_name": "${var.github_repo}",
-            "is_force_import": true
           }
         }'
     EOT
