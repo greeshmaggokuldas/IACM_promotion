@@ -66,11 +66,16 @@ resource "terraform_data" "import_template" {
     command = <<-EOT
       set -e
 
-      # Install jq if not available
+      # Install jq and yq if not available
       if ! command -v jq &> /dev/null; then
         echo "Installing jq..."
         curl -sL -o /usr/local/bin/jq https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64
         chmod +x /usr/local/bin/jq
+      fi
+      if ! command -v yq &> /dev/null; then
+        echo "Installing yq..."
+        curl -sL -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.1/yq_linux_amd64
+        chmod +x /usr/local/bin/yq
       fi
 
       echo "=== Promotion Scope: ${local.scope_label} ==="
@@ -93,21 +98,17 @@ resource "terraform_data" "import_template" {
       echo "=== Downloaded YAML (first 6 lines) ==="
       head -6 /tmp/template.yaml
 
-      # Step 2: Update scope identifiers based on target scope
-      # First, remove any existing projectIdentifier and orgIdentifier lines
-      sed -i '/^  projectIdentifier:/d' /tmp/template.yaml
-      sed -i '/^  orgIdentifier:/d' /tmp/template.yaml
-
-      # Now add the correct ones based on scope (after 'type: Stage' line)
+      # Step 2: Update scope identifiers using yq (proper YAML manipulation)
       if [ "${var.is_project_scope}" = "true" ]; then
-        # Project scope: needs both orgIdentifier and projectIdentifier
-        sed -i "/  type: Stage/a\\  projectIdentifier: ${var.project_id}" /tmp/template.yaml
-        sed -i "/  projectIdentifier:/a\\  orgIdentifier: ${var.org_id}" /tmp/template.yaml
+        # Project scope: set both orgIdentifier and projectIdentifier
+        yq e '.template.projectIdentifier = "${var.project_id}" | .template.orgIdentifier = "${var.org_id}"' -i /tmp/template.yaml
       elif [ "${var.is_org_scope}" = "true" ]; then
-        # Org scope: needs only orgIdentifier, no projectIdentifier
-        sed -i "/  type: Stage/a\\  orgIdentifier: ${var.org_id}" /tmp/template.yaml
+        # Org scope: set orgIdentifier, remove projectIdentifier
+        yq e 'del(.template.projectIdentifier) | .template.orgIdentifier = "${var.org_id}"' -i /tmp/template.yaml
+      else
+        # Account scope: remove both
+        yq e 'del(.template.projectIdentifier) | del(.template.orgIdentifier)' -i /tmp/template.yaml
       fi
-      # Account scope: no orgIdentifier or projectIdentifier needed
 
       echo "=== Updated YAML (first 10 lines) ==="
       head -10 /tmp/template.yaml
