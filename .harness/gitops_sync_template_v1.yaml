@@ -1,5 +1,7 @@
 template:
   name: gitops_sync_template
+  identifier: gitops_sync_template
+  versionLabel: v1
   type: Stage
   projectIdentifier: harshita_agarwal_playground
   orgIdentifier: playground
@@ -117,7 +119,3 @@ template:
             - AllErrors
           action:
             type: StageRollback
-  projectIdentifier: harshita_agarwal_playground
-  orgIdentifier: playground
-  identifier: gitops_sync_template
-  versionLabel: v1
