@@ -1,8 +1,6 @@
 template:
   name: gitops_sync_template
   type: Stage
-  projectIdentifier: Greeshma_Playground
-  orgIdentifier: playground
   spec:
     type: Deployment
     spec:
