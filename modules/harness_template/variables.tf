@@ -51,3 +51,14 @@ variable "template_yaml_path" {
   type    = string
   default = "template.yaml"
 }
+
+variable "harness_api_key" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "harness_endpoint" {
+  type    = string
+  default = "https://app.harness.io"
+}

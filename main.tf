@@ -152,11 +152,15 @@ module "harness_template" {
   template_spec   = local.template_spec
   git_source_url  = local.template_git_source
 
-  # Git-connector to keep the promoted template git-backed
+  # Git-connector to keep the promoted template git-backed (import from git)
   git_connector_ref = var.harness_git_connector_ref
   github_repo       = var.github_repo
   github_branch     = var.github_branch
   template_yaml_path = var.template_yaml_path
+
+  # API credentials for import API call
+  harness_api_key   = var.harness_api_key
+  harness_endpoint  = var.harness_endpoint
 }
 
 # =============================================================================
