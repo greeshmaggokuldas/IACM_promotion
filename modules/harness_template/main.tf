@@ -19,15 +19,32 @@ locals {
   identifier = try(local.inner.identifier, replace(local.name, " ", "_"))
   version    = try(local.inner.versionLabel, "1.0.0")
   use_git_backend = var.git_connector_ref != ""
+
+  # Determine the import API URL based on scope
+  import_url = (
+    var.is_project_scope
+    ? "${var.harness_endpoint}/v1/orgs/${var.org_id}/projects/${var.project_id}/templates/${local.identifier}/import"
+    : var.is_org_scope
+      ? "${var.harness_endpoint}/v1/orgs/${var.org_id}/templates/${local.identifier}/import"
+      : "${var.harness_endpoint}/v1/templates/${local.identifier}/import"
+  )
+
+  # Scope label for logging
+  scope_label = (
+    var.is_project_scope ? "${var.org_id}/${var.project_id}"
+    : var.is_org_scope   ? "${var.org_id} (org-level)"
+    : "account-level"
+  )
 }
 
 # =============================================================================
 # Import template from Git (git-backed) using Harness API
-# Updates the YAML in Git with target project identifiers, then imports.
+# Supports project, org, and account level imports.
+# Updates the YAML in Git with correct scope identifiers, then imports.
 # =============================================================================
 
 resource "terraform_data" "import_template" {
-  count = var.is_project_scope && local.use_git_backend ? 1 : 0
+  count = local.use_git_backend ? 1 : 0
 
   # Re-run every time by using a timestamp trigger
   triggers_replace = [timestamp()]
@@ -42,6 +59,7 @@ resource "terraform_data" "import_template" {
     repo        = var.github_repo
     branch      = var.github_branch
     file_path   = var.template_yaml_path
+    scope       = var.is_project_scope ? "project" : var.is_org_scope ? "org" : "account"
   }
 
   provisioner "local-exec" {
@@ -55,6 +73,8 @@ resource "terraform_data" "import_template" {
         chmod +x /usr/local/bin/jq
       fi
 
+      echo "=== Promotion Scope: ${local.scope_label} ==="
+
       # Step 1: Get file SHA and download raw content
       FILE_META=$(curl -s \
         -H "Authorization: token ${var.github_token}" \
@@ -63,7 +83,7 @@ resource "terraform_data" "import_template" {
       FILE_SHA=$(echo "$FILE_META" | jq -r '.sha')
       echo "Current file SHA: $FILE_SHA"
 
-      # Download raw content (no base64 issues)
+      # Download raw content
       curl -sL \
         -H "Authorization: token ${var.github_token}" \
         -H "Accept: application/vnd.github.v3.raw" \
@@ -73,21 +93,24 @@ resource "terraform_data" "import_template" {
       echo "=== Downloaded YAML (first 6 lines) ==="
       head -6 /tmp/template.yaml
 
-      # Step 2: Update projectIdentifier and orgIdentifier
-      if grep -q "projectIdentifier:" /tmp/template.yaml; then
-        sed -i "s/  projectIdentifier:.*/  projectIdentifier: ${var.project_id}/" /tmp/template.yaml
-      else
+      # Step 2: Update scope identifiers based on target scope
+      # First, remove any existing projectIdentifier and orgIdentifier lines
+      sed -i '/^  projectIdentifier:/d' /tmp/template.yaml
+      sed -i '/^  orgIdentifier:/d' /tmp/template.yaml
+
+      # Now add the correct ones based on scope (after 'type: Stage' line)
+      if [ "${var.is_project_scope}" = "true" ]; then
+        # Project scope: needs both orgIdentifier and projectIdentifier
         sed -i "/  type: Stage/a\\  projectIdentifier: ${var.project_id}" /tmp/template.yaml
-      fi
-
-      if grep -q "orgIdentifier:" /tmp/template.yaml; then
-        sed -i "s/  orgIdentifier:.*/  orgIdentifier: ${var.org_id}/" /tmp/template.yaml
-      else
         sed -i "/  projectIdentifier:/a\\  orgIdentifier: ${var.org_id}" /tmp/template.yaml
+      elif [ "${var.is_org_scope}" = "true" ]; then
+        # Org scope: needs only orgIdentifier, no projectIdentifier
+        sed -i "/  type: Stage/a\\  orgIdentifier: ${var.org_id}" /tmp/template.yaml
       fi
+      # Account scope: no orgIdentifier or projectIdentifier needed
 
-      echo "=== Updated YAML (first 8 lines) ==="
-      head -8 /tmp/template.yaml
+      echo "=== Updated YAML (first 10 lines) ==="
+      head -10 /tmp/template.yaml
 
       # Step 3: Validate YAML is not empty/corrupt
       if [ ! -s /tmp/template.yaml ]; then
@@ -101,10 +124,10 @@ resource "terraform_data" "import_template" {
         exit 1
       fi
 
-      # Step 4: Push to Git using jq to build proper JSON payload
+      # Step 4: Push to Git
       NEW_CONTENT=$(base64 -w 0 < /tmp/template.yaml)
       PAYLOAD=$(jq -n \
-        --arg msg "chore: set template scope to ${var.org_id}/${var.project_id}" \
+        --arg msg "chore: set template scope to ${local.scope_label}" \
         --arg content "$NEW_CONTENT" \
         --arg sha "$FILE_SHA" \
         --arg branch "${var.github_branch}" \
@@ -128,7 +151,7 @@ resource "terraform_data" "import_template" {
 
       # Step 6: Import template from Git into Harness
       IMPORT_CODE=$(curl -s -o /tmp/import_response.json -w "%%{http_code}" -X POST \
-        "${var.harness_endpoint}/v1/orgs/${var.org_id}/projects/${var.project_id}/templates/${local.identifier}/import" \
+        "${local.import_url}" \
         -H "x-api-key: ${var.harness_api_key}" \
         -H "Harness-Account: ${var.account_id}" \
         -H "Content-Type: application/json" \
@@ -140,7 +163,7 @@ resource "terraform_data" "import_template" {
         echo "ERROR: Harness import failed with status $IMPORT_CODE"
         exit 1
       fi
-      echo "SUCCESS: Template '${local.identifier}' imported into ${var.project_id}"
+      echo "SUCCESS: Template '${local.identifier}' imported at scope: ${local.scope_label}"
     EOT
   }
 }
@@ -161,7 +184,7 @@ resource "harness_platform_template" "project" {
 }
 
 resource "harness_platform_template" "org" {
-  count         = var.is_org_scope ? 1 : 0
+  count         = var.is_org_scope && !local.use_git_backend ? 1 : 0
   identifier    = local.identifier
   name          = local.name
   version       = local.version
@@ -171,7 +194,7 @@ resource "harness_platform_template" "org" {
 }
 
 resource "harness_platform_template" "account" {
-  count         = var.is_account_scope ? 1 : 0
+  count         = var.is_account_scope && !local.use_git_backend ? 1 : 0
   identifier    = local.identifier
   name          = local.name
   version       = local.version
