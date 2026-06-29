@@ -49,6 +49,13 @@ resource "terraform_data" "import_template" {
     command = <<-EOT
       set -e
 
+      # Install jq if not available
+      if ! command -v jq &> /dev/null; then
+        echo "Installing jq..."
+        curl -sL -o /usr/local/bin/jq https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64
+        chmod +x /usr/local/bin/jq
+      fi
+
       # Step 1: Get current file from GitHub
       FILE_RESPONSE=$(curl -s \
         -H "Authorization: token ${var.github_token}" \
