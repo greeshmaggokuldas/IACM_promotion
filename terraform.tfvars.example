@@ -1,0 +1,35 @@
+# =============================================================================
+# terraform.tfvars  —  copy this to terraform.tfvars and fill in your values
+# (Never commit the real file — it contains secrets)
+# =============================================================================
+
+# ── Harness ──────────────────────────────────────────────────────────────────
+harness_account_id = "YOUR_ACCOUNT_ID"
+harness_api_key    = "pat.YOUR_TOKEN_HERE"          # sensitive — use TF_VAR_ env var in CI
+
+# ── Promotion target ─────────────────────────────────────────────────────────
+# Scope is auto-detected:
+#   project_id set            → project scope
+#   only org_id set           → org scope
+#   neither set               → account scope
+
+target_org_id     = "my_org"        # set to "" for account-level
+target_project_id = "my_project"    # set to "" for org or account-level
+
+# ── GitHub source ─────────────────────────────────────────────────────────────
+github_token  = "ghp_YOUR_TOKEN"    # sensitive — use TF_VAR_ env var in CI
+github_owner  = "my-github-org"
+github_repo   = "harness-templates"
+github_branch = "main"
+
+# ── File paths inside the repo ────────────────────────────────────────────────
+template_yaml_path = "templates/pipeline/template.yaml"
+opa_yaml_path      = "opa/OPA.yaml"
+
+# ── What to promote ───────────────────────────────────────────────────────────
+promote_template = true
+promote_opa      = true
+
+# ── Harness Git Connector (keeps promoted template git-backed) ────────────────
+# Leave empty ("") to skip git-backing (inline store only).
+harness_git_connector_ref = "account.my_github_connector"
