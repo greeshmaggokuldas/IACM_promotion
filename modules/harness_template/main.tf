@@ -84,7 +84,7 @@ resource "terraform_data" "import_template" {
       sleep 3
 
       # Step 3: Import the template from Git into Harness
-      RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+      RESPONSE=$(curl -s -w "\n%%{http_code}" -X POST \
         "${var.harness_endpoint}/v1/orgs/${var.org_id}/projects/${var.project_id}/templates/${local.identifier}/import" \
         -H "x-api-key: ${var.harness_api_key}" \
         -H "Harness-Account: ${var.account_id}" \
