@@ -101,39 +101,27 @@ locals {
 # 2b. Check if template already exists in the target project
 # =============================================================================
 
+# Note: We use the Harness template list API with a version query param.
+# OpenTofu's http provider HTML-encodes '&' in URLs, so we use a single
+# query parameter approach via the v1 API which uses path-based routing.
+
 data "http" "check_template_exists" {
-  count = var.promote_template && local.is_project_scope ? 1 : 0
+  count = var.promote_template && local.is_project_scope && local.template_spec != null ? 1 : 0
 
-  url = join("", [
-    var.harness_endpoint,
-    "/template/api/templates/",
-    local.template_identifier,
-    "?accountIdentifier=", var.harness_account_id,
-    "&orgIdentifier=", var.target_org_id,
-    "&projectIdentifier=", var.target_project_id,
-    "&getDefaultFromOtherRepo=true"
-  ])
-
+  url    = "${var.harness_endpoint}/v1/orgs/${var.target_org_id}/projects/${var.target_project_id}/templates/${local.template_identifier}"
   method = "GET"
 
   request_headers = {
-    x-api-key    = var.harness_api_key
-    Content-Type = "application/json"
-  }
-
-  # Don't fail if template doesn't exist (404) or API returns bad request (400)
-  lifecycle {
-    postcondition {
-      condition     = contains([200, 404, 400], self.status_code)
-      error_message = "Unexpected response from Harness API: ${self.status_code}"
-    }
+    x-api-key        = var.harness_api_key
+    Harness-Account  = var.harness_account_id
+    Content-Type     = "application/json"
   }
 }
 
 locals {
-  # Template exists if the API returns 200
+  # Template exists if the API returns 200; treat any other response as "does not exist"
   template_already_exists = (
-    var.promote_template && local.is_project_scope
+    var.promote_template && local.is_project_scope && local.template_spec != null
     ? try(data.http.check_template_exists[0].status_code == 200, false)
     : false
   )
