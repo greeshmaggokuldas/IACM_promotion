@@ -44,10 +44,10 @@ output "template_git_source" {
 
 output "opa_policy_identifier" {
   description = "Harness identifier of the promoted OPA policy (if applicable)."
-  value       = var.promote_opa ? module.harness_opa[0].policy_identifier : null
+  value       = var.promote_opa && local.opa_spec != null ? module.harness_opa[0].policy_identifier : null
 }
 
 output "opa_git_source" {
   description = "GitHub source URL the promoted OPA policy was read from."
-  value       = var.promote_opa ? module.harness_opa[0].git_source_url : null
+  value       = var.promote_opa && local.opa_spec != null ? module.harness_opa[0].git_source_url : null
 }

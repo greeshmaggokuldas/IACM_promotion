@@ -68,15 +68,15 @@ data "github_repository_file" "opa_yaml" {
 # =============================================================================
 
 locals {
-  # Decoded template spec (null when not promoting templates)
-  template_spec = var.promote_template ? yamldecode(
-    data.github_repository_file.template_yaml[0].content
-  ) : null
+  # Raw content from GitHub (may be null or empty)
+  template_raw = var.promote_template ? try(data.github_repository_file.template_yaml[0].content, "") : ""
+  opa_raw      = var.promote_opa ? try(data.github_repository_file.opa_yaml[0].content, "") : ""
 
-  # Decoded OPA spec (null when not promoting OPA)
-  opa_spec = var.promote_opa ? yamldecode(
-    data.github_repository_file.opa_yaml[0].content
-  ) : null
+  # Decoded template spec (null when not promoting or content is empty)
+  template_spec = var.promote_template && local.template_raw != null && trimspace(local.template_raw) != "" ? yamldecode(local.template_raw) : null
+
+  # Decoded OPA spec (null when not promoting or content is empty)
+  opa_spec = var.promote_opa && local.opa_raw != null && trimspace(local.opa_raw) != "" ? yamldecode(local.opa_raw) : null
 
   # Extract template identifier from the YAML spec for the existence check
   template_identifier = var.promote_template ? try(
@@ -131,8 +131,8 @@ locals {
     : false
   )
 
-  # Only proceed with creation if template does NOT already exist
-  should_create_template = var.promote_template && !local.template_already_exists
+  # Only proceed with creation if template does NOT already exist AND spec is valid
+  should_create_template = var.promote_template && !local.template_already_exists && local.template_spec != null
 }
 
 # =============================================================================
@@ -169,7 +169,7 @@ module "harness_template" {
 # =============================================================================
 
 module "harness_opa" {
-  count  = var.promote_opa ? 1 : 0
+  count  = var.promote_opa && local.opa_spec != null ? 1 : 0
   source = "./modules/harness_opa"
 
   # Harness targeting
