@@ -1,0 +1,121 @@
+template:
+  name: gitops_sync_template
+  type: Stage
+  projectIdentifier: Greeshma_Playground
+  orgIdentifier: playground
+  spec:
+    type: Deployment
+    spec:
+      deploymentType: Kubernetes
+      gitOpsEnabled: true
+      execution:
+        steps:
+          - step:
+              type: GitOpsSync
+              name: GitOpsSync
+              identifier: GitOpsSync
+              spec:
+                prune: false
+                dryRun: false
+                applyOnly: false
+                forceApply: false
+                retryStrategy: {}
+                retry: false
+                syncOptions:
+                  skipSchemaValidation: false
+                  autoCreateNamespace: false
+                  pruneResourcesAtLast: false
+                  applyOutOfSyncOnly: false
+                  replaceResources: false
+                  prunePropagationPolicy: foreground
+                  respectIgnoreDifferences: false
+                  serverSideApply: false
+                autoPromoteRolloutBehavior: promote-full
+                waitTillHealthy: true
+                applicationRegex: <+pipeline.stages.App_list_and_Diff.spec.execution.steps.GitOpsGetAppDetails.spec.applicationsList[0].applicationName>
+                failOnTimeout: true
+              timeout: 1m
+              failureStrategies:
+                - onFailure:
+                    errors:
+                      - AllErrors
+                    action:
+                      type: Ignore
+          - step:
+              type: ShellScript
+              name: capture failure response
+              identifier: capture_failure_response
+              spec:
+                shell: Bash
+                executionTarget: {}
+                source:
+                  type: Inline
+                  spec:
+                    script: |
+                      #!/bin/bash
+                      set -e
+
+                      STEP_STATUS="<+execution.steps.GitOpsSync.status>"
+                      AGENT_ID="gitopsbyoa"
+                      ACCOUNT_ID="<+account.identifier>"
+                      ORG_ID="<+org.identifier>"
+                      PROJECT_ID="<+project.identifier>"
+
+                      # Get app name from the GitOpsGetAppDetails output
+                      RAW_JSON='<+pipeline.stages.App_list_and_Diff.spec.execution.steps.GitOpsGetAppDetails.getAppDetailsOutcome.applications>'
+                      APP_NAME=$(echo "$RAW_JSON" | jq -r '.applications[0].name')
+
+                      echo "===== GitOps Sync Summary ====="
+                      echo "Step Status: $STEP_STATUS"
+                      echo "Application: $APP_NAME"
+                      echo "Agent: $AGENT_ID"
+                      echo ""
+
+                      # Fetch application details from Harness GitOps API
+                      QUERY_PARAMS="accountIdentifier=${ACCOUNT_ID}&orgIdentifier=${ORG_ID}&projectIdentifier=${PROJECT_ID}&refresh=true"
+                      API_URL="https://app.harness.io/gateway/gitops/api/v1/agents/${AGENT_ID}/applications/${APP_NAME}?${QUERY_PARAMS}"
+
+                      curl -s -X GET "$API_URL" \
+                        -H "x-api-key: ${HARNESS_API_KEY}" \
+                        -H "Content-Type: application/json" \
+                        -o /tmp/sync_response.json
+
+                      if [ -f /tmp/sync_response.json ] && [ -s /tmp/sync_response.json ]; then
+                        HEALTH_STATUS=$(cat /tmp/sync_response.json | jq -r '.app.status.health.status // "Unknown"')
+                        SYNC_STATUS=$(cat /tmp/sync_response.json | jq -r '.app.status.sync.status // "Unknown"')
+
+                        echo "Application Health Status: $HEALTH_STATUS"
+                        echo "Application Sync Status: $SYNC_STATUS"
+
+                        if [ "$HEALTH_STATUS" == "Degraded" ] || [ "$HEALTH_STATUS" == "Missing" ]; then
+                          echo ""
+                          echo "Unhealthy Resources:"
+                          cat /tmp/sync_response.json | jq -r '.app.status.resources[] | select(.health.status != "Healthy" and .health.status != null) | "  \(.kind)/\(.name): \(.health.status) - \(.health.message // "No message")"'
+                        fi
+                      else
+                        echo "Warning: Could not fetch application status from API"
+                      fi
+
+                      echo ""
+                      echo "===== End Summary ====="
+                environmentVariables:
+                  - name: HARNESS_API_KEY
+                    type: Secret
+                    value: harness_Api_key
+                outputVariables: []
+              timeout: 10m
+        rollbackSteps: []
+      service:
+        serviceRef: <+input>
+        serviceInputs: <+input>
+      environment:
+        environmentRef: sandbox
+        deployToAll: true
+    failureStrategies:
+      - onFailure:
+          errors:
+            - AllErrors
+          action:
+            type: StageRollback
+  identifier: gitops_sync_template
+  versionLabel: v1
