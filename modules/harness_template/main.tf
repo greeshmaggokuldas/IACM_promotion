@@ -99,16 +99,17 @@ resource "terraform_data" "import_template" {
       head -6 /tmp/template.yaml
 
       # Step 2: Update scope identifiers using yq (proper YAML manipulation)
+      # Remove both scope fields first
+      yq e 'del(.template.projectIdentifier) | del(.template.orgIdentifier)' -i /tmp/template.yaml
+
       if [ "${var.is_project_scope}" = "true" ]; then
-        # Project scope: set both orgIdentifier and projectIdentifier
-        yq e '.template.projectIdentifier = "${var.project_id}" | .template.orgIdentifier = "${var.org_id}"' -i /tmp/template.yaml
+        # Project scope: insert projectIdentifier and orgIdentifier after type
+        sed -i "/^  type: Stage/a\\  projectIdentifier: ${var.project_id}\n  orgIdentifier: ${var.org_id}" /tmp/template.yaml
       elif [ "${var.is_org_scope}" = "true" ]; then
-        # Org scope: set orgIdentifier, remove projectIdentifier
-        yq e 'del(.template.projectIdentifier) | .template.orgIdentifier = "${var.org_id}"' -i /tmp/template.yaml
-      else
-        # Account scope: remove both
-        yq e 'del(.template.projectIdentifier) | del(.template.orgIdentifier)' -i /tmp/template.yaml
+        # Org scope: insert orgIdentifier after type
+        sed -i "/^  type: Stage/a\\  orgIdentifier: ${var.org_id}" /tmp/template.yaml
       fi
+      # Account scope: no identifiers needed (already removed above)
 
       echo "=== Updated YAML (first 10 lines) ==="
       head -10 /tmp/template.yaml
