@@ -30,6 +30,9 @@ locals {
 resource "terraform_data" "import_template" {
   count = var.is_project_scope && local.use_git_backend ? 1 : 0
 
+  # Re-run every time by using a timestamp trigger
+  triggers_replace = [timestamp()]
+
   input = {
     identifier  = local.identifier
     name        = local.name
