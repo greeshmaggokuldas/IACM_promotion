@@ -47,7 +47,7 @@ resource "terraform_data" "import_template" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      curl -sf -X POST \
+      RESPONSE=$(curl -s -w "\n%%{http_code}" -X POST \
         "${var.harness_endpoint}/v1/orgs/${var.org_id}/projects/${var.project_id}/templates/${local.identifier}/import" \
         -H "x-api-key: ${var.harness_api_key}" \
         -H "Harness-Account: ${var.account_id}" \
@@ -65,7 +65,15 @@ resource "terraform_data" "import_template" {
             "template_version": "${local.version}",
             "template_description": "Promoted via OpenTofu from Git"
           }
-        }'
+        }')
+      HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+      BODY=$(echo "$RESPONSE" | sed '$d')
+      echo "HTTP Status: $HTTP_CODE"
+      echo "Response: $BODY"
+      if [ "$HTTP_CODE" -ge 400 ]; then
+        echo "ERROR: Import API failed with status $HTTP_CODE"
+        exit 1
+      fi
     EOT
   }
 }
