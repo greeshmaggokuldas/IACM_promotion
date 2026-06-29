@@ -104,14 +104,13 @@ locals {
 data "http" "check_template_exists" {
   count = var.promote_template && local.is_project_scope ? 1 : 0
 
-  url = "${var.harness_endpoint}/v1/orgs/${var.target_org_id}/projects/${var.target_project_id}/templates/${local.template_identifier}"
+  url = "${var.harness_endpoint}/template/api/templates/${local.template_identifier}?accountIdentifier=${var.harness_account_id}&orgIdentifier=${var.target_org_id}&projectIdentifier=${var.target_project_id}&getDefaultFromOtherRepo=true"
 
   method = "GET"
 
   request_headers = {
-    x-api-key      = var.harness_api_key
-    Harness-Account = var.harness_account_id
-    Content-Type   = "application/json"
+    x-api-key    = var.harness_api_key
+    Content-Type = "application/json"
   }
 
   # Don't fail if template doesn't exist (404 is expected)
