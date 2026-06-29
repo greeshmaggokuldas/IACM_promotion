@@ -78,6 +78,12 @@ locals {
     data.github_repository_file.opa_yaml[0].content
   ) : null
 
+  # Extract template identifier from the YAML spec for the existence check
+  template_identifier = var.promote_template ? try(
+    local.template_spec.template.identifier,
+    try(local.template_spec.identifier, replace(try(local.template_spec.template.name, try(local.template_spec.name, "promoted-template")), " ", "_"))
+  ) : ""
+
   # Canonical git source URL that will be stored on the promoted resource
   # so the created artifact remains git-backed and traceable to its origin.
   git_source_url = "https://github.com/${var.github_owner}/${var.github_repo}/blob/${var.github_branch}"
@@ -92,11 +98,49 @@ locals {
 }
 
 # =============================================================================
+# 2b. Check if template already exists in the target project
+# =============================================================================
+
+data "http" "check_template_exists" {
+  count = var.promote_template && local.is_project_scope ? 1 : 0
+
+  url = "${var.harness_endpoint}/v1/orgs/${var.target_org_id}/projects/${var.target_project_id}/templates/${local.template_identifier}"
+
+  method = "GET"
+
+  request_headers = {
+    x-api-key      = var.harness_api_key
+    Harness-Account = var.harness_account_id
+    Content-Type   = "application/json"
+  }
+
+  # Don't fail if template doesn't exist (404 is expected)
+  lifecycle {
+    postcondition {
+      condition     = contains([200, 404], self.status_code)
+      error_message = "Unexpected response from Harness API: ${self.status_code}"
+    }
+  }
+}
+
+locals {
+  # Template exists if the API returns 200
+  template_already_exists = (
+    var.promote_template && local.is_project_scope
+    ? try(data.http.check_template_exists[0].status_code == 200, false)
+    : false
+  )
+
+  # Only proceed with creation if template does NOT already exist
+  should_create_template = var.promote_template && !local.template_already_exists
+}
+
+# =============================================================================
 # 3. Template Promotion Module
 # =============================================================================
 
 module "harness_template" {
-  count  = var.promote_template ? 1 : 0
+  count  = local.should_create_template ? 1 : 0
   source = "./modules/harness_template"
 
   # Harness targeting
