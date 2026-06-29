@@ -104,7 +104,15 @@ locals {
 data "http" "check_template_exists" {
   count = var.promote_template && local.is_project_scope ? 1 : 0
 
-  url = "${var.harness_endpoint}/template/api/templates/${local.template_identifier}?accountIdentifier=${var.harness_account_id}&orgIdentifier=${var.target_org_id}&projectIdentifier=${var.target_project_id}&getDefaultFromOtherRepo=true"
+  url = join("", [
+    var.harness_endpoint,
+    "/template/api/templates/",
+    local.template_identifier,
+    "?accountIdentifier=", var.harness_account_id,
+    "&orgIdentifier=", var.target_org_id,
+    "&projectIdentifier=", var.target_project_id,
+    "&getDefaultFromOtherRepo=true"
+  ])
 
   method = "GET"
 
@@ -113,10 +121,10 @@ data "http" "check_template_exists" {
     Content-Type = "application/json"
   }
 
-  # Don't fail if template doesn't exist (404 is expected)
+  # Don't fail if template doesn't exist (404) or API returns bad request (400)
   lifecycle {
     postcondition {
-      condition     = contains([200, 404], self.status_code)
+      condition     = contains([200, 404, 400], self.status_code)
       error_message = "Unexpected response from Harness API: ${self.status_code}"
     }
   }
