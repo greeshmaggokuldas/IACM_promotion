@@ -1,3 +1,12 @@
+terraform {
+  required_providers {
+    harness = {
+      source  = "harness/harness"
+      version = "~> 0.31"
+    }
+  }
+}
+
 locals {
   spec       = var.template_spec != null ? var.template_spec : {}
   name       = try(local.spec.name,         "promoted-template")
