@@ -23,8 +23,7 @@ locals {
 
 # =============================================================================
 # Import template from Git (git-backed) using Harness API
-# This registers the template in Harness pointing to the existing YAML file
-# in the Git repo — it does NOT create a new file.
+# Updates the YAML in Git with target project identifiers, then imports.
 # =============================================================================
 
 resource "terraform_data" "import_template" {
@@ -56,81 +55,92 @@ resource "terraform_data" "import_template" {
         chmod +x /usr/local/bin/jq
       fi
 
-      # Step 1: Get current file from GitHub
-      FILE_RESPONSE=$(curl -s \
+      # Step 1: Get file SHA and download raw content
+      FILE_META=$(curl -s \
         -H "Authorization: token ${var.github_token}" \
         -H "Accept: application/vnd.github.v3+json" \
         "https://api.github.com/repos/${var.github_owner}/${var.github_repo}/contents/${var.template_yaml_path}?ref=${var.github_branch}")
+      FILE_SHA=$(echo "$FILE_META" | jq -r '.sha')
+      echo "Current file SHA: $FILE_SHA"
 
-      FILE_SHA=$(echo "$FILE_RESPONSE" | jq -r '.sha')
-      echo "$FILE_RESPONSE" | jq -r '.content' | base64 -d > /tmp/template_original.yaml
-
-      echo "=== Original YAML (first 5 lines) ==="
-      head -5 /tmp/template_original.yaml
-
-      # Step 2: Update projectIdentifier and orgIdentifier in the YAML
-      if grep -q "projectIdentifier:" /tmp/template_original.yaml; then
-        sed -i "s/projectIdentifier:.*/projectIdentifier: ${var.project_id}/" /tmp/template_original.yaml
-      else
-        sed -i "/type: Stage/a\\  projectIdentifier: ${var.project_id}" /tmp/template_original.yaml
-      fi
-
-      if grep -q "orgIdentifier:" /tmp/template_original.yaml; then
-        sed -i "s/orgIdentifier:.*/orgIdentifier: ${var.org_id}/" /tmp/template_original.yaml
-      else
-        sed -i "/projectIdentifier:/a\\  orgIdentifier: ${var.org_id}" /tmp/template_original.yaml
-      fi
-
-      echo "=== Updated YAML (first 7 lines) ==="
-      head -7 /tmp/template_original.yaml
-
-      # Step 3: Push updated file to Git
-      NEW_CONTENT=$(base64 -w 0 /tmp/template_original.yaml)
-      UPDATE_RESPONSE=$(curl -s -w "\n%%{http_code}" -X PUT \
+      # Download raw content (no base64 issues)
+      curl -sL \
         -H "Authorization: token ${var.github_token}" \
-        -H "Accept: application/vnd.github.v3+json" \
-        "https://api.github.com/repos/${var.github_owner}/${var.github_repo}/contents/${var.template_yaml_path}" \
-        -d "{\"message\":\"chore: update template identifiers for ${var.project_id}\",\"content\":\"$NEW_CONTENT\",\"sha\":\"$FILE_SHA\",\"branch\":\"${var.github_branch}\"}")
-      UPDATE_CODE=$(echo "$UPDATE_RESPONSE" | tail -1)
-      echo "Git update status: $UPDATE_CODE"
-      if [ "$UPDATE_CODE" -ge 400 ]; then
-        echo "ERROR: Failed to update file in Git"
-        echo "$UPDATE_RESPONSE" | sed '$d'
+        -H "Accept: application/vnd.github.v3.raw" \
+        "https://api.github.com/repos/${var.github_owner}/${var.github_repo}/contents/${var.template_yaml_path}?ref=${var.github_branch}" \
+        -o /tmp/template.yaml
+
+      echo "=== Downloaded YAML (first 6 lines) ==="
+      head -6 /tmp/template.yaml
+
+      # Step 2: Update projectIdentifier and orgIdentifier
+      if grep -q "projectIdentifier:" /tmp/template.yaml; then
+        sed -i "s/  projectIdentifier:.*/  projectIdentifier: ${var.project_id}/" /tmp/template.yaml
+      else
+        sed -i "/  type: Stage/a\\  projectIdentifier: ${var.project_id}" /tmp/template.yaml
+      fi
+
+      if grep -q "orgIdentifier:" /tmp/template.yaml; then
+        sed -i "s/  orgIdentifier:.*/  orgIdentifier: ${var.org_id}/" /tmp/template.yaml
+      else
+        sed -i "/  projectIdentifier:/a\\  orgIdentifier: ${var.org_id}" /tmp/template.yaml
+      fi
+
+      echo "=== Updated YAML (first 8 lines) ==="
+      head -8 /tmp/template.yaml
+
+      # Step 3: Validate YAML is not empty/corrupt
+      if [ ! -s /tmp/template.yaml ]; then
+        echo "ERROR: Template YAML is empty!"
+        exit 1
+      fi
+      LINECOUNT=$(wc -l < /tmp/template.yaml)
+      echo "YAML line count: $LINECOUNT"
+      if [ "$LINECOUNT" -lt 10 ]; then
+        echo "ERROR: Template YAML seems truncated (only $LINECOUNT lines)"
         exit 1
       fi
 
-      # Step 4: Wait for Git to propagate and Harness cache to refresh
-      sleep 15
+      # Step 4: Push to Git using jq to build proper JSON payload
+      NEW_CONTENT=$(base64 -w 0 < /tmp/template.yaml)
+      PAYLOAD=$(jq -n \
+        --arg msg "chore: set template scope to ${var.org_id}/${var.project_id}" \
+        --arg content "$NEW_CONTENT" \
+        --arg sha "$FILE_SHA" \
+        --arg branch "${var.github_branch}" \
+        '{message: $msg, content: $content, sha: $sha, branch: $branch}')
 
-      # Step 5: Import the template from Git into Harness
-      RESPONSE=$(curl -s -w "\n%%{http_code}" -X POST \
+      UPDATE_CODE=$(curl -s -o /tmp/git_response.json -w "%%{http_code}" -X PUT \
+        -H "Authorization: token ${var.github_token}" \
+        -H "Accept: application/vnd.github.v3+json" \
+        "https://api.github.com/repos/${var.github_owner}/${var.github_repo}/contents/${var.template_yaml_path}" \
+        -d "$PAYLOAD")
+      echo "Git push status: $UPDATE_CODE"
+      if [ "$UPDATE_CODE" -ge 400 ]; then
+        echo "ERROR: Git push failed"
+        cat /tmp/git_response.json
+        exit 1
+      fi
+
+      # Step 5: Wait for Harness connector cache to refresh
+      echo "Waiting 20s for Harness to pick up new commit..."
+      sleep 20
+
+      # Step 6: Import template from Git into Harness
+      IMPORT_CODE=$(curl -s -o /tmp/import_response.json -w "%%{http_code}" -X POST \
         "${var.harness_endpoint}/v1/orgs/${var.org_id}/projects/${var.project_id}/templates/${local.identifier}/import" \
         -H "x-api-key: ${var.harness_api_key}" \
         -H "Harness-Account: ${var.account_id}" \
         -H "Content-Type: application/json" \
-        -d '{
-          "git_import_details": {
-            "connector_ref": "${var.git_connector_ref}",
-            "repo_name": "${var.github_repo}",
-            "branch_name": "${var.github_branch}",
-            "file_path": "${var.template_yaml_path}",
-            "is_force_import": true
-          },
-          "template_import_request": {
-            "template_name": "${local.name}",
-            "template_version": "${local.version}",
-            "template_description": "Promoted via OpenTofu from Git"
-          }
-        }')
-      HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-      BODY=$(echo "$RESPONSE" | sed '$d')
-      echo "Import HTTP Status: $HTTP_CODE"
-      echo "Import Response: $BODY"
-      if [ "$HTTP_CODE" -ge 400 ]; then
-        echo "ERROR: Import API failed with status $HTTP_CODE"
+        -d "{\"git_import_details\":{\"connector_ref\":\"${var.git_connector_ref}\",\"repo_name\":\"${var.github_repo}\",\"branch_name\":\"${var.github_branch}\",\"file_path\":\"${var.template_yaml_path}\",\"is_force_import\":true},\"template_import_request\":{\"template_name\":\"${local.name}\",\"template_version\":\"${local.version}\",\"template_description\":\"Promoted via OpenTofu\"}}")
+      echo "Import status: $IMPORT_CODE"
+      cat /tmp/import_response.json
+      echo ""
+      if [ "$IMPORT_CODE" -ge 400 ]; then
+        echo "ERROR: Harness import failed with status $IMPORT_CODE"
         exit 1
       fi
-      echo "SUCCESS: Template imported into ${var.project_id}"
+      echo "SUCCESS: Template '${local.identifier}' imported into ${var.project_id}"
     EOT
   }
 }
