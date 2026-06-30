@@ -59,7 +59,7 @@ resource "terraform_data" "import_template" {
   }
 
   provisioner "local-exec" {
-    # Secrets passed via environment Ã¢â‚¬â€ not interpolated into the command string
+    # Secrets passed via environment - not interpolated into the command string
     environment = {
       GITHUB_TOKEN    = var.github_token
       HARNESS_API_KEY = var.harness_api_key
