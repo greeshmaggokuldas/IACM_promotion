@@ -47,20 +47,20 @@ provider "github" {
 # 1. Read source YAML files from GitHub
 # =============================================================================
 
-# -- template.yaml (optional — only used when var.promote_template = true) --
+# -- template.yaml (optional — only used when promote_type = "template") --
 data "github_repository_file" "template_yaml" {
-  count      = var.promote_template ? 1 : 0
+  count      = local.do_template ? 1 : 0
   repository = var.github_repo
   branch     = var.github_branch
   file       = var.template_yaml_path   # e.g. "templates/template.yaml"
 }
 
-# -- OPA.yaml (optional — only used when var.promote_opa = true) --
+# -- OPA rego file (optional — only used when promote_type = "opa") --
 data "github_repository_file" "opa_yaml" {
-  count      = var.promote_opa ? 1 : 0
+  count      = local.do_opa ? 1 : 0
   repository = var.github_repo
   branch     = var.github_branch
-  file       = var.opa_yaml_path        # e.g. "opa/OPA.yaml"
+  file       = var.opa_yaml_path        # e.g. ".harness/OPA/policy.rego"
 }
 
 # =============================================================================
@@ -68,18 +68,22 @@ data "github_repository_file" "opa_yaml" {
 # =============================================================================
 
 locals {
+  # Determine what to promote based on promote_type
+  do_template = var.promote_type == "template"
+  do_opa      = var.promote_type == "opa"
+
   # Raw content from GitHub (may be null or empty)
-  template_raw = var.promote_template ? try(data.github_repository_file.template_yaml[0].content, "") : ""
-  opa_raw      = var.promote_opa ? try(data.github_repository_file.opa_yaml[0].content, "") : ""
+  template_raw = local.do_template ? try(data.github_repository_file.template_yaml[0].content, "") : ""
+  opa_raw      = local.do_opa ? try(data.github_repository_file.opa_yaml[0].content, "") : ""
 
   # Decoded template spec (null when not promoting or content is empty)
-  template_spec = var.promote_template && local.template_raw != null && trimspace(local.template_raw) != "" ? yamldecode(local.template_raw) : null
+  template_spec = local.do_template && local.template_raw != null && trimspace(local.template_raw) != "" ? yamldecode(local.template_raw) : null
 
   # Decoded OPA spec (null when not promoting or content is empty)
-  opa_spec = var.promote_opa && local.opa_raw != null && trimspace(local.opa_raw) != "" ? yamldecode(local.opa_raw) : null
+  opa_spec = local.do_opa && local.opa_raw != null && trimspace(local.opa_raw) != "" ? yamldecode(local.opa_raw) : null
 
   # Extract template identifier from the YAML spec for the existence check
-  template_identifier = var.promote_template ? try(
+  template_identifier = local.do_template ? try(
     local.template_spec.template.identifier,
     try(local.template_spec.identifier, replace(try(local.template_spec.template.name, try(local.template_spec.name, "promoted-template")), " ", "_"))
   ) : ""
@@ -106,7 +110,7 @@ locals {
 # query parameter approach via the v1 API which uses path-based routing.
 
 data "http" "check_template_exists" {
-  count = var.promote_template && local.is_project_scope && local.template_spec != null ? 1 : 0
+  count = local.do_template && local.is_project_scope && local.template_spec != null ? 1 : 0
 
   url    = "${var.harness_endpoint}/v1/orgs/${var.target_org_id}/projects/${var.target_project_id}/templates/${local.template_identifier}"
   method = "GET"
@@ -121,13 +125,13 @@ data "http" "check_template_exists" {
 locals {
   # Template exists if the API returns 200; treat any other response as "does not exist"
   template_already_exists = (
-    var.promote_template && local.is_project_scope && local.template_spec != null
+    local.do_template && local.is_project_scope && local.template_spec != null
     ? try(data.http.check_template_exists[0].status_code == 200, false)
     : false
   )
 
   # Only proceed with creation if template does NOT already exist AND spec is valid
-  should_create_template = var.promote_template && !local.template_already_exists && local.template_spec != null
+  should_create_template = local.do_template && !local.template_already_exists && local.template_spec != null
 }
 
 # =============================================================================
@@ -166,11 +170,11 @@ module "harness_template" {
 }
 
 # =============================================================================
-# 4. OPA Policy Promotion Module
+# 4. OPA Policy Promotion Module (git-backed import)
 # =============================================================================
 
 module "harness_opa" {
-  count  = var.promote_opa && local.opa_spec != null ? 1 : 0
+  count  = local.do_opa ? 1 : 0
   source = "./modules/harness_opa"
 
   # Harness targeting
@@ -186,4 +190,16 @@ module "harness_opa" {
   # OPA content from GitHub
   opa_spec       = local.opa_spec
   git_source_url = local.opa_git_source
+
+  # Git-backed import settings
+  git_connector_ref  = var.harness_git_connector_ref
+  github_repo        = var.github_repo
+  github_branch      = var.github_branch
+  github_token       = var.github_token
+  github_owner       = var.github_owner
+  opa_file_path      = var.opa_yaml_path
+  harness_api_key    = var.harness_api_key
+  harness_endpoint   = var.harness_endpoint
+  opa_policy_name    = var.opa_policy_name
+  opa_policy_identifier = var.opa_policy_identifier
 }

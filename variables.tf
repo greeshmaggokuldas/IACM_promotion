@@ -84,18 +84,44 @@ variable "opa_yaml_path" {
 }
 
 # -----------------------------------------------------------------------------
-# What to promote
+# What to promote (dropdown: "template" or "opa")
 # -----------------------------------------------------------------------------
+variable "promote_type" {
+  description = "Type of resource to promote: 'template' or 'opa'."
+  type        = string
+  default     = "template"
+
+  validation {
+    condition     = contains(["template", "opa"], var.promote_type)
+    error_message = "promote_type must be either 'template' or 'opa'."
+  }
+}
+
 variable "promote_template" {
-  description = "Set to true to promote the Harness Pipeline Template."
+  description = "Set to true to promote the Harness Pipeline Template. Auto-set by promote_type."
   type        = bool
   default     = true
 }
 
 variable "promote_opa" {
-  description = "Set to true to promote the OPA Policy."
+  description = "Set to true to promote the OPA Policy. Auto-set by promote_type."
   type        = bool
   default     = true
+}
+
+# -----------------------------------------------------------------------------
+# OPA policy settings
+# -----------------------------------------------------------------------------
+variable "opa_policy_name" {
+  description = "Name for the OPA policy in Harness (extracted from file if not set)."
+  type        = string
+  default     = ""
+}
+
+variable "opa_policy_identifier" {
+  description = "Identifier for the OPA policy in Harness (derived from name if not set)."
+  type        = string
+  default     = ""
 }
 
 # -----------------------------------------------------------------------------
