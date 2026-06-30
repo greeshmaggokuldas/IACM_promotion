@@ -111,18 +111,33 @@ resource "terraform_data" "import_template" {
       echo "=== Downloaded YAML (first 6 lines) ==="
       head -6 /tmp/template.yaml
 
-      # Step 2: Update scope identifiers using yq (proper YAML manipulation)
+      # Step 2: Update scope identifiers using yq (structural YAML manipulation)
       # Remove both scope fields first
       yq e 'del(.template.projectIdentifier) | del(.template.orgIdentifier)' -i /tmp/template.yaml
 
       if [ "${var.is_project_scope}" = "true" ]; then
-        # Project scope: insert projectIdentifier and orgIdentifier after type
-        sed -i "/^  type: Stage/a\\  projectIdentifier: ${var.project_id}\n  orgIdentifier: ${var.org_id}" /tmp/template.yaml
+        # Project scope: set both projectIdentifier and orgIdentifier
+        yq e '.template.projectIdentifier = "${var.project_id}" | .template.orgIdentifier = "${var.org_id}"' -i /tmp/template.yaml
       elif [ "${var.is_org_scope}" = "true" ]; then
-        # Org scope: insert orgIdentifier after type
-        sed -i "/^  type: Stage/a\\  orgIdentifier: ${var.org_id}" /tmp/template.yaml
+        # Org scope: set only orgIdentifier
+        yq e '.template.orgIdentifier = "${var.org_id}"' -i /tmp/template.yaml
       fi
       # Account scope: no identifiers needed (already removed above)
+
+      # Validate the scope was applied correctly
+      if [ "${var.is_project_scope}" = "true" ]; then
+        ACTUAL_PROJECT=$(yq e '.template.projectIdentifier' /tmp/template.yaml)
+        if [ "$ACTUAL_PROJECT" != "${var.project_id}" ]; then
+          echo "ERROR: projectIdentifier was not set correctly (got: $ACTUAL_PROJECT, expected: ${var.project_id})"
+          exit 1
+        fi
+      elif [ "${var.is_org_scope}" = "true" ]; then
+        ACTUAL_ORG=$(yq e '.template.orgIdentifier' /tmp/template.yaml)
+        if [ "$ACTUAL_ORG" != "${var.org_id}" ]; then
+          echo "ERROR: orgIdentifier was not set correctly (got: $ACTUAL_ORG, expected: ${var.org_id})"
+          exit 1
+        fi
+      fi
 
       echo "=== Updated YAML (first 10 lines) ==="
       head -10 /tmp/template.yaml
@@ -160,24 +175,44 @@ resource "terraform_data" "import_template" {
         exit 1
       fi
 
-      # Step 5: Wait for Harness connector cache to refresh
-      echo "Waiting 20s for Harness to pick up new commit..."
-      sleep 20
+      # Step 5: Wait for Harness connector to sync, with verification
+      echo "Waiting for Harness to pick up new commit..."
+      NEW_SHA=$(jq -r '.content.sha' /tmp/git_response.json 2>/dev/null || echo "unknown")
+      echo "Pushed commit SHA: $NEW_SHA"
 
-      # Step 6: Import template from Git into Harness
-      IMPORT_CODE=$(curl -s -o /tmp/import_response.json -w "%%{http_code}" -X POST \
+      MAX_RETRIES=3
+      RETRY_DELAY=10
+      IMPORT_SUCCESS=false
+
+      for ATTEMPT in $(seq 1 $MAX_RETRIES); do
+        echo "=== Import attempt $ATTEMPT/$MAX_RETRIES (waiting $${RETRY_DELAY}s) ==="
+        sleep $RETRY_DELAY
+
+        # Step 6: Import template from Git into Harness
+        IMPORT_CODE=$(curl -s -o /tmp/import_response.json -w "%%{http_code}" -X POST \
         "${local.import_url}" \
         -H "x-api-key: $HARNESS_API_KEY" \
         -H "Harness-Account: ${var.account_id}" \
         -H "Content-Type: application/json" \
         -d "{\"git_import_details\":{\"connector_ref\":\"${var.git_connector_ref}\",\"repo_name\":\"${var.github_repo}\",\"branch_name\":\"${var.github_branch}\",\"file_path\":\"${var.template_yaml_path}\",\"is_force_import\":true},\"template_import_request\":{\"template_name\":\"${local.name}\",\"template_version\":\"${local.version}\",\"template_description\":\"Promoted via OpenTofu\"}}")
-      echo "Import status: $IMPORT_CODE"
-      cat /tmp/import_response.json
-      echo ""
-      if [ "$IMPORT_CODE" -ge 400 ]; then
-        echo "ERROR: Harness import failed with status $IMPORT_CODE"
+        echo "Import status: $IMPORT_CODE"
+        cat /tmp/import_response.json
+        echo ""
+
+        if [ "$IMPORT_CODE" -lt 400 ]; then
+          IMPORT_SUCCESS=true
+          break
+        fi
+
+        echo "Import failed (attempt $ATTEMPT), will retry..."
+        RETRY_DELAY=$((RETRY_DELAY + 10))
+      done
+
+      if [ "$IMPORT_SUCCESS" != "true" ]; then
+        echo "ERROR: Harness import failed after $MAX_RETRIES attempts"
         exit 1
       fi
+
       echo "SUCCESS: Template '${local.identifier}' imported at scope: ${local.scope_label}"
     EOT
   }
