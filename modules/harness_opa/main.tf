@@ -106,29 +106,19 @@ resource "terraform_data" "import_opa_policy" {
           "git_path": $filepath
         }')
 
-      # Build URL with query params - use printf to inject & without HCL encoding
-      BASE_URL="${var.harness_endpoint}/pm/api/v1/policies"
-      ACCT="${var.account_id}"
-      ORG="${var.org_id}"
-      PROJ="${var.project_id}"
-      BRANCH="${var.github_branch}"
-      IS_PROJECT="${var.is_project_scope}"
-      AMP=$(printf '\x26')
-
-      QUERY="accountIdentifier=$ACCT"
-      if [ -n "$ORG" ]; then
-        QUERY="$${QUERY}$${AMP}orgIdentifier=$ORG"
+      # Build URL - write to file to avoid any encoding issues
+      echo -n "https://app.harness.io/pm/api/v1/policies?accountIdentifier=${var.account_id}" > /tmp/api_url.txt
+      echo -n "&orgIdentifier=${var.org_id}" >> /tmp/api_url.txt
+      if [ "${var.is_project_scope}" = "true" ]; then
+        echo -n "&projectIdentifier=${var.project_id}" >> /tmp/api_url.txt
       fi
-      if [ "$IS_PROJECT" = "true" ]; then
-        QUERY="$${QUERY}$${AMP}projectIdentifier=$PROJ"
-      fi
-      QUERY="$${QUERY}$${AMP}git_branch=$BRANCH"
-      QUERY="$${QUERY}$${AMP}git_connector_ref=${var.git_connector_ref}"
-      QUERY="$${QUERY}$${AMP}git_repo=${var.github_repo}"
-      QUERY="$${QUERY}$${AMP}git_path=${var.opa_file_path}"
-      QUERY="$${QUERY}$${AMP}git_commit_msg=chore: promote OPA policy ${local.identifier}"
+      echo -n "&git_branch=${var.github_branch}" >> /tmp/api_url.txt
+      echo -n "&git_connector_ref=${var.git_connector_ref}" >> /tmp/api_url.txt
+      echo -n "&git_repo=${var.github_repo}" >> /tmp/api_url.txt
+      echo -n "&git_path=${var.opa_file_path}" >> /tmp/api_url.txt
+      echo -n "&git_commit_msg=promote_opa_policy" >> /tmp/api_url.txt
 
-      API_URL="$BASE_URL?$QUERY"
+      API_URL=$(cat /tmp/api_url.txt)
       echo "API URL: $API_URL"
 
       echo "=== Creating OPA Policy ==="
@@ -142,10 +132,20 @@ resource "terraform_data" "import_opa_policy" {
       cat /tmp/opa_response.json
       echo ""
 
-      # If 409 (conflict/already exists), try PUT to update
+      # If 409 (conflict/already exists), try PATCH to update
       if [ "$RESPONSE_CODE" = "409" ] || [ "$RESPONSE_CODE" = "400" ]; then
         echo "Policy may already exist, attempting update..."
-        UPDATE_URL="$BASE_URL/${local.identifier}?$QUERY"
+        echo -n "https://app.harness.io/pm/api/v1/policies/${local.identifier}?accountIdentifier=${var.account_id}" > /tmp/update_url.txt
+        echo -n "&orgIdentifier=${var.org_id}" >> /tmp/update_url.txt
+        if [ "${var.is_project_scope}" = "true" ]; then
+          echo -n "&projectIdentifier=${var.project_id}" >> /tmp/update_url.txt
+        fi
+        echo -n "&git_branch=${var.github_branch}" >> /tmp/update_url.txt
+        echo -n "&git_connector_ref=${var.git_connector_ref}" >> /tmp/update_url.txt
+        echo -n "&git_repo=${var.github_repo}" >> /tmp/update_url.txt
+        echo -n "&git_path=${var.opa_file_path}" >> /tmp/update_url.txt
+        echo -n "&git_commit_msg=update_opa_policy" >> /tmp/update_url.txt
+        UPDATE_URL=$(cat /tmp/update_url.txt)
         RESPONSE_CODE=$(curl -s -o /tmp/opa_response.json -w "%%{http_code}" -X PATCH \
           "$UPDATE_URL" \
           -H "x-api-key: ${var.harness_api_key}" \
