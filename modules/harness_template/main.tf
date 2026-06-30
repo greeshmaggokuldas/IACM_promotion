@@ -90,7 +90,6 @@ resource "terraform_data" "import_template" {
 
       install_tool "jq" "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64"
       install_tool "yq" "https://github.com/mikefarah/yq/releases/download/v4.44.1/yq_linux_amd64"
-      fi
 
       echo "=== Promotion Scope: ${local.scope_label} ==="
 
