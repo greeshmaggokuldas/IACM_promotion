@@ -106,26 +106,27 @@ resource "terraform_data" "import_opa_policy" {
           "git_path": $filepath
         }')
 
-      # Build URL with query params in shell to avoid HCL encoding issues
+      # Build URL with query params - use printf to inject & without HCL encoding
       BASE_URL="${var.harness_endpoint}/pm/api/v1/policies"
       ACCT="${var.account_id}"
       ORG="${var.org_id}"
       PROJ="${var.project_id}"
       BRANCH="${var.github_branch}"
       IS_PROJECT="${var.is_project_scope}"
+      AMP=$(printf '\x26')
 
       QUERY="accountIdentifier=$ACCT"
       if [ -n "$ORG" ]; then
-        QUERY="$QUERY""&""orgIdentifier=$ORG"
+        QUERY="$${QUERY}$${AMP}orgIdentifier=$ORG"
       fi
       if [ "$IS_PROJECT" = "true" ]; then
-        QUERY="$QUERY""&""projectIdentifier=$PROJ"
+        QUERY="$${QUERY}$${AMP}projectIdentifier=$PROJ"
       fi
-      QUERY="$QUERY""&""git_branch=$BRANCH"
-      QUERY="$QUERY""&""git_connector_ref=${var.git_connector_ref}"
-      QUERY="$QUERY""&""git_repo=${var.github_repo}"
-      QUERY="$QUERY""&""git_path=${var.opa_file_path}"
-      QUERY="$QUERY""&""git_commit_msg=chore: promote OPA policy ${local.identifier}"
+      QUERY="$${QUERY}$${AMP}git_branch=$BRANCH"
+      QUERY="$${QUERY}$${AMP}git_connector_ref=${var.git_connector_ref}"
+      QUERY="$${QUERY}$${AMP}git_repo=${var.github_repo}"
+      QUERY="$${QUERY}$${AMP}git_path=${var.opa_file_path}"
+      QUERY="$${QUERY}$${AMP}git_commit_msg=chore: promote OPA policy ${local.identifier}"
 
       API_URL="$BASE_URL?$QUERY"
       echo "API URL: $API_URL"
