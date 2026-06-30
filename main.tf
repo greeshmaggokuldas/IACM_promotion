@@ -79,8 +79,8 @@ locals {
   # Decoded template spec (null when not promoting or content is empty)
   template_spec = local.do_template && local.template_raw != null && trimspace(local.template_raw) != "" ? yamldecode(local.template_raw) : null
 
-  # Decoded OPA spec (null when not promoting or content is empty)
-  opa_spec = local.do_opa && local.opa_raw != null && trimspace(local.opa_raw) != "" ? yamldecode(local.opa_raw) : null
+  # Decoded OPA spec — for .rego files, just pass as raw string (not YAML)
+  opa_spec = local.do_opa && local.opa_raw != null && trimspace(local.opa_raw) != "" ? { "rego" = local.opa_raw } : null
 
   # Extract template identifier from the YAML spec for the existence check
   template_identifier = local.do_template ? try(
