@@ -117,6 +117,7 @@ resource "terraform_data" "import_opa_policy" {
       echo -n "&git_repo=${var.github_repo}" >> /tmp/api_url.txt
       echo -n "&git_path=${var.opa_file_path}" >> /tmp/api_url.txt
       echo -n "&git_commit_msg=promote_opa_policy" >> /tmp/api_url.txt
+      echo -n "&git_is_new_file=false" >> /tmp/api_url.txt
 
       API_URL=$(cat /tmp/api_url.txt)
       echo "API URL: $API_URL"
