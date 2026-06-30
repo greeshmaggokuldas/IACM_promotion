@@ -55,12 +55,27 @@ resource "terraform_data" "import_opa_policy" {
     command = <<-EOT
       set -e
 
-      # Install jq if not available
-      if ! command -v jq &> /dev/null; then
-        echo "Installing jq..."
-        curl -sL -o /usr/local/bin/jq https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64
-        chmod +x /usr/local/bin/jq
-      fi
+      # Install jq if not available (with validation)
+      install_tool() {
+        local name="$1" url="$2" dest="/usr/local/bin/$1"
+        if command -v "$name" &> /dev/null; then
+          echo "$name already available: $(command -v $name)"
+          return 0
+        fi
+        echo "Installing $name..."
+        if ! curl -sfL --retry 3 --retry-delay 2 -o "$dest" "$url"; then
+          echo "ERROR: Failed to download $name from $url"
+          exit 1
+        fi
+        chmod +x "$dest"
+        if ! "$dest" --version &> /dev/null; then
+          echo "ERROR: $name binary is not functional after install"
+          exit 1
+        fi
+        echo "$name installed successfully"
+      }
+
+      install_tool "jq" "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64"
 
       echo "=== OPA Policy Promotion ==="
       echo "Scope: ${local.scope_label}"
