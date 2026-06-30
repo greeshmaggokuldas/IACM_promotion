@@ -107,17 +107,16 @@ resource "terraform_data" "import_opa_policy" {
         }')
 
       # Build URL - write to file to avoid any encoding issues
-      echo -n "https://app.harness.io/pm/api/v1/policies?accountIdentifier=${var.account_id}" > /tmp/api_url.txt
+      # Key: use /gateway/ prefix, git_import=true, and module=iacm
+      echo -n "https://app.harness.io/gateway/pm/api/v1/policies?accountIdentifier=${var.account_id}" > /tmp/api_url.txt
       echo -n "&orgIdentifier=${var.org_id}" >> /tmp/api_url.txt
       if [ "${var.is_project_scope}" = "true" ]; then
         echo -n "&projectIdentifier=${var.project_id}" >> /tmp/api_url.txt
       fi
-      echo -n "&git_branch=${var.github_branch}" >> /tmp/api_url.txt
-      echo -n "&git_connector_ref=${var.git_connector_ref}" >> /tmp/api_url.txt
-      echo -n "&git_repo=${var.github_repo}" >> /tmp/api_url.txt
-      echo -n "&git_path=${var.opa_file_path}" >> /tmp/api_url.txt
-      echo -n "&git_commit_msg=promote_opa_policy" >> /tmp/api_url.txt
-      echo -n "&git_is_new_file=false" >> /tmp/api_url.txt
+      echo -n "&module=iacm" >> /tmp/api_url.txt
+      ENCODED_BRANCH=$(echo "${var.github_branch}" | sed 's|/|%2F|g')
+      echo -n "&git_branch=$ENCODED_BRANCH" >> /tmp/api_url.txt
+      echo -n "&git_import=true" >> /tmp/api_url.txt
 
       API_URL=$(cat /tmp/api_url.txt)
       echo "API URL: $API_URL"
@@ -136,16 +135,13 @@ resource "terraform_data" "import_opa_policy" {
       # If 409 (conflict/already exists), try PATCH to update
       if [ "$RESPONSE_CODE" = "409" ] || [ "$RESPONSE_CODE" = "400" ]; then
         echo "Policy may already exist, attempting update..."
-        echo -n "https://app.harness.io/pm/api/v1/policies/${local.identifier}?accountIdentifier=${var.account_id}" > /tmp/update_url.txt
+        echo -n "https://app.harness.io/gateway/pm/api/v1/policies/${local.identifier}?accountIdentifier=${var.account_id}" > /tmp/update_url.txt
         echo -n "&orgIdentifier=${var.org_id}" >> /tmp/update_url.txt
         if [ "${var.is_project_scope}" = "true" ]; then
           echo -n "&projectIdentifier=${var.project_id}" >> /tmp/update_url.txt
         fi
-        echo -n "&git_branch=${var.github_branch}" >> /tmp/update_url.txt
-        echo -n "&git_connector_ref=${var.git_connector_ref}" >> /tmp/update_url.txt
-        echo -n "&git_repo=${var.github_repo}" >> /tmp/update_url.txt
-        echo -n "&git_path=${var.opa_file_path}" >> /tmp/update_url.txt
-        echo -n "&git_commit_msg=update_opa_policy" >> /tmp/update_url.txt
+        echo -n "&module=iacm" >> /tmp/update_url.txt
+        echo -n "&git_branch=$ENCODED_BRANCH" >> /tmp/update_url.txt
         UPDATE_URL=$(cat /tmp/update_url.txt)
         RESPONSE_CODE=$(curl -s -o /tmp/opa_response.json -w "%%{http_code}" -X PATCH \
           "$UPDATE_URL" \
