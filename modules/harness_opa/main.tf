@@ -9,17 +9,17 @@ terraform {
 
 locals {
   spec       = var.opa_spec != null ? var.opa_spec : {}
-  name       = var.opa_policy_name != "" ? var.opa_policy_name : try(local.spec.name, "promoted-opa-policy")
-  identifier = var.opa_policy_identifier != "" ? var.opa_policy_identifier : try(local.spec.identifier, replace(local.name, " ", "_"))
+  name       = var.opa_policy_name != "" ? var.opa_policy_name : try(local.spec.name, replace(basename(var.opa_file_path), ".rego", ""))
+  identifier = var.opa_policy_identifier != "" ? var.opa_policy_identifier : try(local.spec.identifier, replace(local.name, "-", "_"))
   use_git_backend = var.git_connector_ref != ""
 
-  # Determine the import API URL based on scope
+  # Determine the create API URL based on scope (no identifier in path for POST)
   import_url = (
     var.is_project_scope
-    ? "${var.harness_endpoint}/pm/api/v1/policies/${local.identifier}?accountIdentifier=${var.account_id}&orgIdentifier=${var.org_id}&projectIdentifier=${var.project_id}"
+    ? "${var.harness_endpoint}/pm/api/v1/policies?accountIdentifier=${var.account_id}&orgIdentifier=${var.org_id}&projectIdentifier=${var.project_id}"
     : var.is_org_scope
-      ? "${var.harness_endpoint}/pm/api/v1/policies/${local.identifier}?accountIdentifier=${var.account_id}&orgIdentifier=${var.org_id}"
-      : "${var.harness_endpoint}/pm/api/v1/policies/${local.identifier}?accountIdentifier=${var.account_id}"
+      ? "${var.harness_endpoint}/pm/api/v1/policies?accountIdentifier=${var.account_id}&orgIdentifier=${var.org_id}"
+      : "${var.harness_endpoint}/pm/api/v1/policies?accountIdentifier=${var.account_id}"
   )
 
   # Scope label for logging
@@ -89,7 +89,7 @@ resource "terraform_data" "import_opa_policy" {
       ESCAPED_REGO=$(echo "$REGO_CONTENT" | jq -Rs .)
 
       PAYLOAD=$(jq -n \
-        --arg name "${local.identifier}" \
+        --arg name "${local.name}" \
         --arg identifier "${local.identifier}" \
         --argjson rego "$ESCAPED_REGO" \
         --arg connector "${var.git_connector_ref}" \
@@ -106,9 +106,21 @@ resource "terraform_data" "import_opa_policy" {
           "git_path": $filepath
         }')
 
-      echo "=== Creating/Updating OPA Policy ==="
+      # Build URL with query params in shell to avoid HCL & encoding
+      BASE_URL="${var.harness_endpoint}/pm/api/v1/policies"
+      QUERY="accountIdentifier=${var.account_id}"
+      if [ -n "${var.org_id}" ]; then
+        QUERY="$QUERY&orgIdentifier=${var.org_id}"
+      fi
+      if [ "${var.is_project_scope}" = "true" ]; then
+        QUERY="$QUERY&projectIdentifier=${var.project_id}"
+      fi
+      API_URL="$BASE_URL?$QUERY"
+      echo "API URL: $API_URL"
+
+      echo "=== Creating OPA Policy ==="
       RESPONSE_CODE=$(curl -s -o /tmp/opa_response.json -w "%%{http_code}" -X POST \
-        "${local.import_url}" \
+        "$API_URL" \
         -H "x-api-key: ${var.harness_api_key}" \
         -H "Content-Type: application/json" \
         -d "$PAYLOAD")
@@ -120,8 +132,9 @@ resource "terraform_data" "import_opa_policy" {
       # If 409 (conflict/already exists), try PUT to update
       if [ "$RESPONSE_CODE" = "409" ] || [ "$RESPONSE_CODE" = "400" ]; then
         echo "Policy may already exist, attempting update..."
+        UPDATE_URL="$BASE_URL/${local.identifier}?$QUERY"
         RESPONSE_CODE=$(curl -s -o /tmp/opa_response.json -w "%%{http_code}" -X PUT \
-          "${local.import_url}" \
+          "$UPDATE_URL" \
           -H "x-api-key: ${var.harness_api_key}" \
           -H "Content-Type: application/json" \
           -d "$PAYLOAD")
