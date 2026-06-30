@@ -30,7 +30,7 @@ locals {
 resource "terraform_data" "import_opa_policy" {
   count = local.use_git_backend ? 1 : 0
 
-  # Re-run every time
+  # Re-run every time — this is a promotion pipeline, not long-lived infra
   triggers_replace = [timestamp()]
 
   input = {
@@ -46,6 +46,12 @@ resource "terraform_data" "import_opa_policy" {
   }
 
   provisioner "local-exec" {
+    # Secrets passed via environment — not interpolated into the command string
+    environment = {
+      GITHUB_TOKEN   = var.github_token
+      HARNESS_API_KEY = var.harness_api_key
+    }
+
     command = <<-EOT
       set -e
 
@@ -63,7 +69,7 @@ resource "terraform_data" "import_opa_policy" {
 
       # Read the rego file content from GitHub
       REGO_CONTENT=$(curl -sL \
-        -H "Authorization: token ${var.github_token}" \
+        -H "Authorization: token $GITHUB_TOKEN" \
         -H "Accept: application/vnd.github.v3.raw" \
         "https://api.github.com/repos/${var.github_owner}/${var.github_repo}/contents/${var.opa_file_path}?ref=${var.github_branch}")
 
@@ -75,8 +81,7 @@ resource "terraform_data" "import_opa_policy" {
         exit 1
       fi
 
-      # Create OPA policy via Harness API with git-backed configuration
-      # The PM API creates the policy and links it to Git
+      # Build payload with jq
       ESCAPED_REGO=$(echo "$REGO_CONTENT" | jq -Rs .)
 
       PAYLOAD=$(jq -n \
@@ -97,9 +102,8 @@ resource "terraform_data" "import_opa_policy" {
           "git_path": $filepath
         }')
 
-      # Build URL - write to file to avoid any encoding issues
-      # Key: use /gateway/ prefix, git_import=true, and module=iacm
-      echo -n "https://app.harness.io/gateway/pm/api/v1/policies?accountIdentifier=${var.account_id}" > /tmp/api_url.txt
+      # Build URL - write to file to avoid HCL ampersand encoding
+      echo -n "${var.harness_endpoint}/gateway/pm/api/v1/policies?accountIdentifier=${var.account_id}" > /tmp/api_url.txt
       echo -n "&orgIdentifier=${var.org_id}" >> /tmp/api_url.txt
       if [ "${var.is_project_scope}" = "true" ]; then
         echo -n "&projectIdentifier=${var.project_id}" >> /tmp/api_url.txt
@@ -115,7 +119,7 @@ resource "terraform_data" "import_opa_policy" {
       echo "=== Creating OPA Policy ==="
       RESPONSE_CODE=$(curl -s -o /tmp/opa_response.json -w "%%{http_code}" -X POST \
         "$API_URL" \
-        -H "x-api-key: ${var.harness_api_key}" \
+        -H "x-api-key: $HARNESS_API_KEY" \
         -H "Content-Type: application/json" \
         -d "$PAYLOAD")
 
@@ -123,10 +127,10 @@ resource "terraform_data" "import_opa_policy" {
       cat /tmp/opa_response.json
       echo ""
 
-      # If 409 (conflict/already exists), try PATCH to update
+      # If conflict (already exists), try PATCH to update
       if [ "$RESPONSE_CODE" = "409" ] || [ "$RESPONSE_CODE" = "400" ]; then
         echo "Policy may already exist, attempting update..."
-        echo -n "https://app.harness.io/gateway/pm/api/v1/policies/${local.identifier}?accountIdentifier=${var.account_id}" > /tmp/update_url.txt
+        echo -n "${var.harness_endpoint}/gateway/pm/api/v1/policies/${local.identifier}?accountIdentifier=${var.account_id}" > /tmp/update_url.txt
         echo -n "&orgIdentifier=${var.org_id}" >> /tmp/update_url.txt
         if [ "${var.is_project_scope}" = "true" ]; then
           echo -n "&projectIdentifier=${var.project_id}" >> /tmp/update_url.txt
@@ -136,7 +140,7 @@ resource "terraform_data" "import_opa_policy" {
         UPDATE_URL=$(cat /tmp/update_url.txt)
         RESPONSE_CODE=$(curl -s -o /tmp/opa_response.json -w "%%{http_code}" -X PATCH \
           "$UPDATE_URL" \
-          -H "x-api-key: ${var.harness_api_key}" \
+          -H "x-api-key: $HARNESS_API_KEY" \
           -H "Content-Type: application/json" \
           -d "$PAYLOAD")
         echo "Update Response Code: $RESPONSE_CODE"

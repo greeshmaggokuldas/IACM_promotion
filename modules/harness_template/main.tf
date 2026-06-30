@@ -59,6 +59,12 @@ resource "terraform_data" "import_template" {
   }
 
   provisioner "local-exec" {
+    # Secrets passed via environment â€” not interpolated into the command string
+    environment = {
+      GITHUB_TOKEN    = var.github_token
+      HARNESS_API_KEY = var.harness_api_key
+    }
+
     command = <<-EOT
       set -e
 
@@ -78,7 +84,7 @@ resource "terraform_data" "import_template" {
 
       # Step 1: Get file SHA and download raw content
       FILE_META=$(curl -s \
-        -H "Authorization: token ${var.github_token}" \
+        -H "Authorization: token $GITHUB_TOKEN" \
         -H "Accept: application/vnd.github.v3+json" \
         "https://api.github.com/repos/${var.github_owner}/${var.github_repo}/contents/${var.template_yaml_path}?ref=${var.github_branch}")
       FILE_SHA=$(echo "$FILE_META" | jq -r '.sha')
@@ -86,7 +92,7 @@ resource "terraform_data" "import_template" {
 
       # Download raw content
       curl -sL \
-        -H "Authorization: token ${var.github_token}" \
+        -H "Authorization: token $GITHUB_TOKEN" \
         -H "Accept: application/vnd.github.v3.raw" \
         "https://api.github.com/repos/${var.github_owner}/${var.github_repo}/contents/${var.template_yaml_path}?ref=${var.github_branch}" \
         -o /tmp/template.yaml
@@ -132,7 +138,7 @@ resource "terraform_data" "import_template" {
         '{message: $msg, content: $content, sha: $sha, branch: $branch}')
 
       UPDATE_CODE=$(curl -s -o /tmp/git_response.json -w "%%{http_code}" -X PUT \
-        -H "Authorization: token ${var.github_token}" \
+        -H "Authorization: token $GITHUB_TOKEN" \
         -H "Accept: application/vnd.github.v3+json" \
         "https://api.github.com/repos/${var.github_owner}/${var.github_repo}/contents/${var.template_yaml_path}" \
         -d "$PAYLOAD")
@@ -150,7 +156,7 @@ resource "terraform_data" "import_template" {
       # Step 6: Import template from Git into Harness
       IMPORT_CODE=$(curl -s -o /tmp/import_response.json -w "%%{http_code}" -X POST \
         "${local.import_url}" \
-        -H "x-api-key: ${var.harness_api_key}" \
+        -H "x-api-key: $HARNESS_API_KEY" \
         -H "Harness-Account: ${var.account_id}" \
         -H "Content-Type: application/json" \
         -d "{\"git_import_details\":{\"connector_ref\":\"${var.git_connector_ref}\",\"repo_name\":\"${var.github_repo}\",\"branch_name\":\"${var.github_branch}\",\"file_path\":\"${var.template_yaml_path}\",\"is_force_import\":true},\"template_import_request\":{\"template_name\":\"${local.name}\",\"template_version\":\"${local.version}\",\"template_description\":\"Promoted via OpenTofu\"}}")
