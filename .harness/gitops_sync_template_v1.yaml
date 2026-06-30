@@ -3,7 +3,6 @@ template:
   identifier: gitops_sync_template
   versionLabel: v1
   type: Stage
-  projectIdentifier: harshita_agarwal_playground
   orgIdentifier: playground
   spec:
     type: Deployment
