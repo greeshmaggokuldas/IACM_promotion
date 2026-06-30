@@ -97,18 +97,6 @@ variable "promote_type" {
   }
 }
 
-variable "promote_template" {
-  description = "Set to true to promote the Harness Pipeline Template. Auto-set by promote_type."
-  type        = bool
-  default     = true
-}
-
-variable "promote_opa" {
-  description = "Set to true to promote the OPA Policy. Auto-set by promote_type."
-  type        = bool
-  default     = true
-}
-
 # -----------------------------------------------------------------------------
 # OPA policy settings
 # -----------------------------------------------------------------------------

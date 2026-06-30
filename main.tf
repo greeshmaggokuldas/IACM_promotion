@@ -92,8 +92,8 @@ locals {
   # so the created artifact remains git-backed and traceable to its origin.
   git_source_url = "https://github.com/${var.github_owner}/${var.github_repo}/blob/${var.github_branch}"
 
-  template_git_source = var.promote_template ? "${local.git_source_url}/${var.template_yaml_path}" : null
-  opa_git_source      = var.promote_opa      ? "${local.git_source_url}/${var.opa_yaml_path}"      : null
+  template_git_source = local.do_template ? "${local.git_source_url}/${var.template_yaml_path}" : null
+  opa_git_source      = local.do_opa      ? "${local.git_source_url}/${var.opa_yaml_path}"      : null
 
   # Scope helpers — used by child modules to decide which Harness resource type to create
   is_project_scope = var.target_project_id != null && var.target_project_id != ""

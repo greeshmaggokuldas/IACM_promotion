@@ -4,10 +4,6 @@ terraform {
       source  = "harness/harness"
       version = "~> 0.31"
     }
-    http = {
-      source  = "hashicorp/http"
-      version = "~> 3.4"
-    }
   }
 }
 

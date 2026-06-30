@@ -9,18 +9,9 @@ terraform {
 
 locals {
   spec       = var.opa_spec != null ? var.opa_spec : {}
-  name       = var.opa_policy_name != "" ? var.opa_policy_name : try(local.spec.name, replace(basename(var.opa_file_path), ".rego", ""))
+  name       = var.opa_policy_name != "" ? var.opa_policy_name : try(local.spec.name, replace(element(split("/", var.opa_file_path), length(split("/", var.opa_file_path)) - 1), ".rego", ""))
   identifier = var.opa_policy_identifier != "" ? var.opa_policy_identifier : try(local.spec.identifier, replace(local.name, "-", "_"))
   use_git_backend = var.git_connector_ref != ""
-
-  # Determine the create API URL based on scope (no identifier in path for POST)
-  import_url = (
-    var.is_project_scope
-    ? "${var.harness_endpoint}/pm/api/v1/policies?accountIdentifier=${var.account_id}&orgIdentifier=${var.org_id}&projectIdentifier=${var.project_id}"
-    : var.is_org_scope
-      ? "${var.harness_endpoint}/pm/api/v1/policies?accountIdentifier=${var.account_id}&orgIdentifier=${var.org_id}"
-      : "${var.harness_endpoint}/pm/api/v1/policies?accountIdentifier=${var.account_id}"
-  )
 
   # Scope label for logging
   scope_label = (
