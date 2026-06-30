@@ -106,15 +106,27 @@ resource "terraform_data" "import_opa_policy" {
           "git_path": $filepath
         }')
 
-      # Build URL with query params in shell to avoid HCL & encoding
+      # Build URL with query params in shell to avoid HCL encoding issues
       BASE_URL="${var.harness_endpoint}/pm/api/v1/policies"
-      QUERY="accountIdentifier=${var.account_id}"
-      if [ -n "${var.org_id}" ]; then
-        QUERY="$QUERY&orgIdentifier=${var.org_id}"
+      ACCT="${var.account_id}"
+      ORG="${var.org_id}"
+      PROJ="${var.project_id}"
+      BRANCH="${var.github_branch}"
+      IS_PROJECT="${var.is_project_scope}"
+
+      QUERY="accountIdentifier=$ACCT"
+      if [ -n "$ORG" ]; then
+        QUERY="$QUERY""&""orgIdentifier=$ORG"
       fi
-      if [ "${var.is_project_scope}" = "true" ]; then
-        QUERY="$QUERY&projectIdentifier=${var.project_id}"
+      if [ "$IS_PROJECT" = "true" ]; then
+        QUERY="$QUERY""&""projectIdentifier=$PROJ"
       fi
+      QUERY="$QUERY""&""git_branch=$BRANCH"
+      QUERY="$QUERY""&""git_connector_ref=${var.git_connector_ref}"
+      QUERY="$QUERY""&""git_repo=${var.github_repo}"
+      QUERY="$QUERY""&""git_path=${var.opa_file_path}"
+      QUERY="$QUERY""&""git_commit_msg=chore: promote OPA policy ${local.identifier}"
+
       API_URL="$BASE_URL?$QUERY"
       echo "API URL: $API_URL"
 
@@ -133,7 +145,7 @@ resource "terraform_data" "import_opa_policy" {
       if [ "$RESPONSE_CODE" = "409" ] || [ "$RESPONSE_CODE" = "400" ]; then
         echo "Policy may already exist, attempting update..."
         UPDATE_URL="$BASE_URL/${local.identifier}?$QUERY"
-        RESPONSE_CODE=$(curl -s -o /tmp/opa_response.json -w "%%{http_code}" -X PUT \
+        RESPONSE_CODE=$(curl -s -o /tmp/opa_response.json -w "%%{http_code}" -X PATCH \
           "$UPDATE_URL" \
           -H "x-api-key: ${var.harness_api_key}" \
           -H "Content-Type: application/json" \
