@@ -3,7 +3,6 @@ template:
   identifier: gitops_sync_template
   versionLabel: v1
   type: Stage
-  orgIdentifier: playground
   spec:
     type: Deployment
     spec:
@@ -118,3 +117,5 @@ template:
             - AllErrors
           action:
             type: StageRollback
+  projectIdentifier: harshita_agarwal_playground
+  orgIdentifier: playground
