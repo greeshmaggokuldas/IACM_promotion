@@ -69,18 +69,11 @@ variable "github_branch" {
 }
 
 # -----------------------------------------------------------------------------
-# File paths inside the repo
+# File path inside the repo (used for both template and OPA)
 # -----------------------------------------------------------------------------
-variable "template_yaml_path" {
-  description = "Path to template.yaml inside the repository (e.g. templates/template.yaml)."
+variable "resource_path" {
+  description = "Path to the resource file inside the repository. For templates: path to YAML (e.g. .harness/gitops_sync_template_v1.yaml). For OPA: path to .rego file (e.g. .harness/OPA/policy.rego)."
   type        = string
-  default     = "template.yaml"
-}
-
-variable "opa_yaml_path" {
-  description = "Path to OPA.yaml inside the repository (e.g. opa/OPA.yaml)."
-  type        = string
-  default     = "OPA.yaml"
 }
 
 # -----------------------------------------------------------------------------

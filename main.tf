@@ -52,7 +52,7 @@ data "github_repository_file" "template_yaml" {
   count      = local.do_template ? 1 : 0
   repository = var.github_repo
   branch     = var.github_branch
-  file       = var.template_yaml_path   # e.g. "templates/template.yaml"
+  file       = var.resource_path   # e.g. "templates/template.yaml"
 }
 
 # -- OPA rego file (optional — only used when promote_type = "opa") --
@@ -60,7 +60,7 @@ data "github_repository_file" "opa_yaml" {
   count      = local.do_opa ? 1 : 0
   repository = var.github_repo
   branch     = var.github_branch
-  file       = var.opa_yaml_path        # e.g. ".harness/OPA/policy.rego"
+  file       = var.resource_path        # e.g. ".harness/OPA/policy.rego"
 }
 
 # =============================================================================
@@ -92,8 +92,8 @@ locals {
   # so the created artifact remains git-backed and traceable to its origin.
   git_source_url = "https://github.com/${var.github_owner}/${var.github_repo}/blob/${var.github_branch}"
 
-  template_git_source = local.do_template ? "${local.git_source_url}/${var.template_yaml_path}" : null
-  opa_git_source      = local.do_opa      ? "${local.git_source_url}/${var.opa_yaml_path}"      : null
+  template_git_source = local.do_template ? "${local.git_source_url}/${var.resource_path}" : null
+  opa_git_source      = local.do_opa      ? "${local.git_source_url}/${var.resource_path}"      : null
 
   # Scope helpers — used by child modules to decide which Harness resource type to create
   is_project_scope = var.target_project_id != null && var.target_project_id != ""
@@ -160,7 +160,7 @@ module "harness_template" {
   git_connector_ref = var.harness_git_connector_ref
   github_repo       = var.github_repo
   github_branch     = var.github_branch
-  template_yaml_path = var.template_yaml_path
+  template_yaml_path = var.resource_path
 
   # API credentials for import API call
   harness_api_key   = var.harness_api_key
@@ -197,7 +197,7 @@ module "harness_opa" {
   github_branch      = var.github_branch
   github_token       = var.github_token
   github_owner       = var.github_owner
-  opa_file_path      = var.opa_yaml_path
+  opa_file_path      = var.resource_path
   harness_api_key    = var.harness_api_key
   harness_endpoint   = var.harness_endpoint
   opa_policy_name    = var.opa_policy_name
