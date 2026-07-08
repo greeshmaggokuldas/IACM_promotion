@@ -4,10 +4,6 @@ terraform {
       source  = "harness/harness"
       version = "~> 0.31"
     }
-    http = {
-      source  = "hashicorp/http"
-      version = "~> 3.4"
-    }
   }
 }
 
@@ -63,26 +59,43 @@ resource "terraform_data" "import_template" {
   }
 
   provisioner "local-exec" {
+    # Secrets passed via environment - not interpolated into the command string
+    environment = {
+      GITHUB_TOKEN    = var.github_token
+      HARNESS_API_KEY = var.harness_api_key
+    }
+
     command = <<-EOT
       set -e
 
-      # Install jq and yq if not available
-      if ! command -v jq &> /dev/null; then
-        echo "Installing jq..."
-        curl -sL -o /usr/local/bin/jq https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64
-        chmod +x /usr/local/bin/jq
-      fi
-      if ! command -v yq &> /dev/null; then
-        echo "Installing yq..."
-        curl -sL -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.1/yq_linux_amd64
-        chmod +x /usr/local/bin/yq
-      fi
+      # Install jq and yq if not available (with validation)
+      install_tool() {
+        local name="$1" url="$2" dest="/usr/local/bin/$1"
+        if command -v "$name" &> /dev/null; then
+          echo "$name already available: $(command -v $name)"
+          return 0
+        fi
+        echo "Installing $name..."
+        if ! curl -sfL --retry 3 --retry-delay 2 -o "$dest" "$url"; then
+          echo "ERROR: Failed to download $name from $url"
+          exit 1
+        fi
+        chmod +x "$dest"
+        if ! "$dest" --version &> /dev/null; then
+          echo "ERROR: $name binary is not functional after install"
+          exit 1
+        fi
+        echo "$name installed successfully"
+      }
+
+      install_tool "jq" "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64"
+      install_tool "yq" "https://github.com/mikefarah/yq/releases/download/v4.44.1/yq_linux_amd64"
 
       echo "=== Promotion Scope: ${local.scope_label} ==="
 
       # Step 1: Get file SHA and download raw content
       FILE_META=$(curl -s \
-        -H "Authorization: token ${var.github_token}" \
+        -H "Authorization: token $GITHUB_TOKEN" \
         -H "Accept: application/vnd.github.v3+json" \
         "https://api.github.com/repos/${var.github_owner}/${var.github_repo}/contents/${var.template_yaml_path}?ref=${var.github_branch}")
       FILE_SHA=$(echo "$FILE_META" | jq -r '.sha')
@@ -90,7 +103,7 @@ resource "terraform_data" "import_template" {
 
       # Download raw content
       curl -sL \
-        -H "Authorization: token ${var.github_token}" \
+        -H "Authorization: token $GITHUB_TOKEN" \
         -H "Accept: application/vnd.github.v3.raw" \
         "https://api.github.com/repos/${var.github_owner}/${var.github_repo}/contents/${var.template_yaml_path}?ref=${var.github_branch}" \
         -o /tmp/template.yaml
@@ -98,18 +111,33 @@ resource "terraform_data" "import_template" {
       echo "=== Downloaded YAML (first 6 lines) ==="
       head -6 /tmp/template.yaml
 
-      # Step 2: Update scope identifiers using yq (proper YAML manipulation)
+      # Step 2: Update scope identifiers using yq (structural YAML manipulation)
       # Remove both scope fields first
       yq e 'del(.template.projectIdentifier) | del(.template.orgIdentifier)' -i /tmp/template.yaml
 
       if [ "${var.is_project_scope}" = "true" ]; then
-        # Project scope: insert projectIdentifier and orgIdentifier after type
-        sed -i "/^  type: Stage/a\\  projectIdentifier: ${var.project_id}\n  orgIdentifier: ${var.org_id}" /tmp/template.yaml
+        # Project scope: set both projectIdentifier and orgIdentifier
+        yq e '.template.projectIdentifier = "${var.project_id}" | .template.orgIdentifier = "${var.org_id}"' -i /tmp/template.yaml
       elif [ "${var.is_org_scope}" = "true" ]; then
-        # Org scope: insert orgIdentifier after type
-        sed -i "/^  type: Stage/a\\  orgIdentifier: ${var.org_id}" /tmp/template.yaml
+        # Org scope: set only orgIdentifier
+        yq e '.template.orgIdentifier = "${var.org_id}"' -i /tmp/template.yaml
       fi
       # Account scope: no identifiers needed (already removed above)
+
+      # Validate the scope was applied correctly
+      if [ "${var.is_project_scope}" = "true" ]; then
+        ACTUAL_PROJECT=$(yq e '.template.projectIdentifier' /tmp/template.yaml)
+        if [ "$ACTUAL_PROJECT" != "${var.project_id}" ]; then
+          echo "ERROR: projectIdentifier was not set correctly (got: $ACTUAL_PROJECT, expected: ${var.project_id})"
+          exit 1
+        fi
+      elif [ "${var.is_org_scope}" = "true" ]; then
+        ACTUAL_ORG=$(yq e '.template.orgIdentifier' /tmp/template.yaml)
+        if [ "$ACTUAL_ORG" != "${var.org_id}" ]; then
+          echo "ERROR: orgIdentifier was not set correctly (got: $ACTUAL_ORG, expected: ${var.org_id})"
+          exit 1
+        fi
+      fi
 
       echo "=== Updated YAML (first 10 lines) ==="
       head -10 /tmp/template.yaml
@@ -136,7 +164,7 @@ resource "terraform_data" "import_template" {
         '{message: $msg, content: $content, sha: $sha, branch: $branch}')
 
       UPDATE_CODE=$(curl -s -o /tmp/git_response.json -w "%%{http_code}" -X PUT \
-        -H "Authorization: token ${var.github_token}" \
+        -H "Authorization: token $GITHUB_TOKEN" \
         -H "Accept: application/vnd.github.v3+json" \
         "https://api.github.com/repos/${var.github_owner}/${var.github_repo}/contents/${var.template_yaml_path}" \
         -d "$PAYLOAD")
@@ -147,24 +175,44 @@ resource "terraform_data" "import_template" {
         exit 1
       fi
 
-      # Step 5: Wait for Harness connector cache to refresh
-      echo "Waiting 20s for Harness to pick up new commit..."
-      sleep 20
+      # Step 5: Wait for Harness connector to sync, with verification
+      echo "Waiting for Harness to pick up new commit..."
+      NEW_SHA=$(jq -r '.content.sha' /tmp/git_response.json 2>/dev/null || echo "unknown")
+      echo "Pushed commit SHA: $NEW_SHA"
 
-      # Step 6: Import template from Git into Harness
-      IMPORT_CODE=$(curl -s -o /tmp/import_response.json -w "%%{http_code}" -X POST \
+      MAX_RETRIES=3
+      RETRY_DELAY=10
+      IMPORT_SUCCESS=false
+
+      for ATTEMPT in $(seq 1 $MAX_RETRIES); do
+        echo "=== Import attempt $ATTEMPT/$MAX_RETRIES (waiting $${RETRY_DELAY}s) ==="
+        sleep $RETRY_DELAY
+
+        # Step 6: Import template from Git into Harness
+        IMPORT_CODE=$(curl -s -o /tmp/import_response.json -w "%%{http_code}" -X POST \
         "${local.import_url}" \
-        -H "x-api-key: ${var.harness_api_key}" \
+        -H "x-api-key: $HARNESS_API_KEY" \
         -H "Harness-Account: ${var.account_id}" \
         -H "Content-Type: application/json" \
         -d "{\"git_import_details\":{\"connector_ref\":\"${var.git_connector_ref}\",\"repo_name\":\"${var.github_repo}\",\"branch_name\":\"${var.github_branch}\",\"file_path\":\"${var.template_yaml_path}\",\"is_force_import\":true},\"template_import_request\":{\"template_name\":\"${local.name}\",\"template_version\":\"${local.version}\",\"template_description\":\"Promoted via OpenTofu\"}}")
-      echo "Import status: $IMPORT_CODE"
-      cat /tmp/import_response.json
-      echo ""
-      if [ "$IMPORT_CODE" -ge 400 ]; then
-        echo "ERROR: Harness import failed with status $IMPORT_CODE"
+        echo "Import status: $IMPORT_CODE"
+        cat /tmp/import_response.json
+        echo ""
+
+        if [ "$IMPORT_CODE" -lt 400 ]; then
+          IMPORT_SUCCESS=true
+          break
+        fi
+
+        echo "Import failed (attempt $ATTEMPT), will retry..."
+        RETRY_DELAY=$((RETRY_DELAY + 10))
+      done
+
+      if [ "$IMPORT_SUCCESS" != "true" ]; then
+        echo "ERROR: Harness import failed after $MAX_RETRIES attempts"
         exit 1
       fi
+
       echo "SUCCESS: Template '${local.identifier}' imported at scope: ${local.scope_label}"
     EOT
   }
